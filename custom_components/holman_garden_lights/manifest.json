@@ -1,0 +1,16 @@
+{
+  "domain": "holman_garden_lights",
+  "name": "Holman Garden Lights",
+  "codeowners": ["@grillp"],
+  "config_flow": true,
+  "documentation": "https://github.com/grillp/ha-holman-ble-garden-lights",
+  "issue_tracker": "https://github.com/grillp/ha-holman-ble-garden-lights/issues",
+  "iot_class": "local_push",
+  "requirements": ["bleak-retry-connector>=3.4.0"],
+  "bluetooth": [
+    {
+      "service_uuid": "a876f000-7f10-4d70-b606-7df77c3eee0c"
+    }
+  ],
+  "version": "0.1.0"
+}

@@ -1,0 +1,61 @@
+name: Release
+
+# Tag a commit "v<manifest version>" (e.g. v1.0.0) and push the tag to cut
+# a release. HACS tracks GitHub releases for update notifications, so the
+# tag's version and manifest.json's version have to agree - the version
+# check below fails the run instead of publishing a release that would
+# leave HACS confused about which version is actually installed.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check tag matches manifest.json version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          manifest_version="$(python3 -c "import json; print(json.load(open('custom_components/holman_garden_lights/manifest.json'))['version'])")"
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest.json version ${manifest_version} - bump manifest.json first, then re-tag."
+            exit 1
+          fi
+
+      - name: Extract release notes from the tag message
+        id: notes
+        run: |
+          # When this tag came from tag-on-publish-merge.yml, its
+          # annotation message is the real changelog (commit list since
+          # the last publish, built on the Gitea side). A tag pushed some
+          # other way (e.g. gil tagging GitHub directly, bypassing Gitea
+          # entirely) is usually lightweight and has no message - fall
+          # back to GitHub's own generated notes in that case.
+          notes="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+          if [ -z "$notes" ]; then
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "notes<<RELEASE_NOTES_EOF"
+            echo "$notes"
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body: ${{ steps.notes.outputs.has_notes == 'true' && steps.notes.outputs.notes || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.has_notes != 'true' }}

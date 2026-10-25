@@ -1,0 +1,74 @@
+name: Tag release after publish merge
+
+# Closes the loop with the Gitea side's publish-to-github.yml. That
+# workflow opens a PR from a "publish/vX.Y.Z" branch whenever a version
+# is tagged on Gitea - this workflow fires once that PR is merged,
+# pushes a matching vX.Y.Z tag at the merge commit, and that tag push is
+# what actually triggers release.yml and cuts the GitHub release.
+#
+# End to end: tag a version on Gitea -> PR opens here -> you merge it ->
+# this tags main -> release.yml fires -> release exists. One manual
+# step (tagging on Gitea), not two.
+#
+# Only acts on PRs whose branch matches "publish/v*" - the ones the
+# Gitea workflow creates - so merging any other PR to main is untouched.
+# A pull_request run from a fork never gets a write-capable token
+# regardless of the permissions requested below (GitHub's own safeguard),
+# so this can't be used to forge a tag from outside.
+#
+# Important: the tag push below uses secrets.TOKEN_HA_HOLMAN_GITHUB, not
+# the default GITHUB_TOKEN. GitHub explicitly does not trigger new
+# workflow runs from pushes made with the default GITHUB_TOKEN (to avoid
+# accidental recursion) - if this pushed the tag with GITHUB_TOKEN,
+# release.yml would simply never fire and the loop wouldn't actually
+# close. A real token (PAT or GitHub App installation token) is required
+# for that handoff to work at all, not just for "better" security.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'publish/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main at the merge commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.TOKEN_HA_HOLMAN_GITHUB }}
+
+      - name: Tag and push
+        env:
+          # The PR body is the changelog publish-to-github.yml built on the
+          # Gitea side (commit list since the last publish). Stashing it in
+          # the tag's own annotation message is how release.yml, a
+          # separately-triggered workflow run with no other link back to
+          # this PR, gets hold of it - no extra file or commit needed, the
+          # tag carries its own release notes.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          branch="${{ github.event.pull_request.head.ref }}"
+          tag="${branch#publish/}"
+
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::Branch '$branch' doesn't look like a version publish (expected publish/vX.Y.Z), skipping tag."
+            exit 0
+          fi
+
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::notice::Tag $tag already exists, skipping (probably re-merged or re-run)."
+            exit 0
+          fi
+
+          tag_message="$PR_BODY"
+          if [ -z "$tag_message" ]; then
+            tag_message="$tag"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "$tag_message"
+          git push origin "$tag"
